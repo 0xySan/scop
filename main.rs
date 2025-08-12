@@ -10,6 +10,47 @@ use std::str;
 
 use glfw::{Action, Context, Key};
 
+fn get_element(m: &Matrix4<f32>, row: usize, col: usize) -> f32 {
+    match col {
+        0 => m.x[row],
+        1 => m.y[row],
+        2 => m.z[row],
+        3 => m.w[row],
+        _ => panic!("Column out of bounds"),
+    }
+}
+
+fn set_element(m: &mut Matrix4<f32>, row: usize, col: usize, value: f32) {
+    match col {
+        0 => m.x[row] = value,
+        1 => m.y[row] = value,
+        2 => m.z[row] = value,
+        3 => m.w[row] = value,
+        _ => panic!("Column out of bounds"),
+    }
+}
+
+fn matrix4_mult(a: &Matrix4<f32>, b: &Matrix4<f32>) -> Matrix4<f32> {
+    let mut result = Matrix4::new(
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+    );
+
+    for i in 0..4 {
+        for j in 0..4 {
+            let mut sum = 0.0;
+            for k in 0..4 {
+                sum += get_element(a, i, k) * get_element(b, k, j);
+            }
+            set_element(&mut result, i, j, sum);
+        }
+    }
+
+    result
+}
+
 fn compile_shader(src: &CStr, kind: gl::types::GLenum) -> u32 {
     unsafe {
         let shader = gl::CreateShader(kind);
@@ -303,11 +344,15 @@ fn main() {
 
             let m_rot =
                 gl::GetUniformLocation(shader_program, CString::new("rot").unwrap().as_ptr());
+
+            let temp = matrix4_mult(&matricerotx, &matriceroty);
+            let result = matrix4_mult(&temp, &translation);
+
             gl::UniformMatrix4fv(
                 m_rot,
                 1,
                 gl::TRUE,
-                (matricerotx * matriceroty * translation).as_ptr(),
+                result.as_ptr() as *const f32,
             );
 
             let tex_toggle_loc = gl::GetUniformLocation(
