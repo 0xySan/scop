@@ -14,10 +14,6 @@ out vec2 TexCoord;  // for texture mode
 
 void main()
 {
-    mat4 m = mat4(1.0);
-    m[3][2] = zoom;
-    m[3][1] = -1.0;
-
     coord = aPos;
     TexCoord = aTexCoord;
 
