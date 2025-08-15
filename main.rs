@@ -301,7 +301,7 @@ fn main() {
 	window.set_key_polling(true);
 	window.set_scroll_polling(true);
 
-	gl::load_with(|s| glfw.get_proc_address_raw(s));
+	gl::load_with(|s| glfw.get_proc_address_raw(s).map_or(ptr::null(), |f| f as *const _));
 
 	let vertices = parse_obj(&filename);
 
