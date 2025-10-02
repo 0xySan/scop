@@ -6,10 +6,11 @@ use cgmath::*;
 use std::ffi::CString;
 use std::fs;
 use std::ptr;
+use std::panic;
 use std::str;
 use std::f32::consts::PI;
 
-use glfw::{Action, Context, Key};
+use glfw::*;
 
 mod calc_matrices;
 use calc_matrices::*;
@@ -124,8 +125,21 @@ fn parse_obj(filename: &str) -> Vec<f32> {
 }
 
 fn main() {
+	panic::set_hook(Box::new(|info| {
+        eprintln!("Application panicked: {}", info);
+        unsafe {
+            glfw::ffi::glfwTerminate();
+        }
+        std::process::exit(1);
+    }));
 	let filename = std::env::args().nth(1).expect("No filename given");
+	if !filename.ends_with(".obj") {
+		panic!("File must be a .obj");
+	}
 	let texture_filename = std::env::args().nth(2).expect("No filename given");
+	if !texture_filename.ends_with(".png") && !texture_filename.ends_with(".jpg") && !texture_filename.ends_with(".jpeg") {
+		panic!("Texture file must be a .png, .jpg or .jpeg");
+	}
 	
 	let mut glfw = glfw::init(glfw::fail_on_errors).expect("Failed to initialize GLFW");
 	glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
@@ -299,16 +313,6 @@ fn main() {
 				glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
 					println!("Escape pressed, exiting.");
 					window.set_should_close(true);
-					drop(glfw);
-					unsafe {
-						gl::DeleteVertexArrays(1, &vao);
-						gl::DeleteBuffers(1, &vbo);
-						gl::DeleteProgram(shader_program);
-						gl::DeleteTextures(1, &texture_id);
-						gl::DeleteShader(vertex_shader);
-						gl::DeleteShader(fragment_shader);
-					}
-					return;
 				}
 				glfw::WindowEvent::Scroll(_, yoffset) => position.z += yoffset as f32 * 0.1,
 
@@ -345,5 +349,15 @@ fn main() {
 				_ => {}
 			}
 		}
+	}
+	drop(window);
+	unsafe {
+		gl::DeleteVertexArrays(1, &vao);
+		gl::DeleteBuffers(1, &vbo);
+		gl::DeleteProgram(shader_program);
+		gl::DeleteTextures(1, &texture_id);
+		gl::DeleteShader(vertex_shader);
+		gl::DeleteShader(fragment_shader);
+		glfw::ffi::glfwTerminate();
 	}
 }
