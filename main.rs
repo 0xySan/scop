@@ -54,7 +54,6 @@ fn parse_obj(filename: &str) -> Vec<f32> {
 	let mut faces: Vec<Vec<(usize, Option<usize>)>> = Vec::new();
 
 	// Fallback spherical UV mapping for when vt data is missing.
-	// u in [0,1] from azimuth, v in [0,1] from elevation.
 	fn spherical_uv(p: Vector3<f32>) -> Vector2<f32> {
 		let r = (p.x * p.x + p.y * p.y + p.z * p.z).sqrt();
 		if r == 0.0 {
@@ -65,6 +64,7 @@ fn parse_obj(filename: &str) -> Vec<f32> {
 		Vector2::new(u.fract(), v.clamp(0.0, 1.0))
 	}
 
+	// Parse OBJ file
 	for line in contents.lines() {
 		let split: Vec<&str> = line.split_whitespace().collect();
 		if split.is_empty() || split[0].starts_with('#') {
@@ -90,12 +90,24 @@ fn parse_obj(filename: &str) -> Vec<f32> {
 					let pos_idx = parts
 						.get(0)
 						.and_then(|s| s.parse::<isize>().ok())
-						.map(|idx| if idx < 0 { (positions.len() as isize + idx + 1) as usize } else { idx as usize })
+						.map(|idx| {
+							if idx < 0 {
+								(positions.len() as isize + idx + 1) as usize
+							} else {
+								idx as usize
+							}
+						})
 						.unwrap_or(0);
 					let tex_idx_opt = parts
 						.get(1)
 						.and_then(|s| if s.is_empty() { None } else { s.parse::<isize>().ok() })
-						.map(|idx| if idx < 0 { (texcoords.len() as isize + idx + 1) as usize } else { idx as usize });
+						.map(|idx| {
+							if idx < 0 {
+								(texcoords.len() as isize + idx + 1) as usize
+							} else {
+								idx as usize
+							}
+						});
 					face_indices.push((pos_idx, tex_idx_opt));
 				}
 				faces.push(face_indices);
@@ -104,13 +116,37 @@ fn parse_obj(filename: &str) -> Vec<f32> {
 		}
 	}
 
+	// === NEW: Center the object around the origin ===
+	if !positions.is_empty() {
+		let min_x = positions.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
+		let max_x = positions.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
+		let min_y = positions.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+		let max_y = positions.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
+		let min_z = positions.iter().map(|p| p.z).fold(f32::INFINITY, f32::min);
+		let max_z = positions.iter().map(|p| p.z).fold(f32::NEG_INFINITY, f32::max);
+
+		let center = Vector3::new(
+			(min_x + max_x) / 2.0,
+			(min_y + max_y) / 2.0,
+			(min_z + max_z) / 2.0,
+		);
+
+		for p in &mut positions {
+			*p -= center;
+		}
+	}
+
 	// Build vertex buffer with triangulation and UV fallback
 	for face_indices in faces {
-		if face_indices.len() < 3 { continue; }
+		if face_indices.len() < 3 {
+			continue;
+		}
 		for i in 1..face_indices.len() - 1 {
 			let tri = [face_indices[0], face_indices[i], face_indices[i + 1]];
 			for &(pi, ti_opt) in &tri {
-				if pi == 0 || pi > positions.len() { continue; }
+				if pi == 0 || pi > positions.len() {
+					continue;
+				}
 				let pos = positions[pi - 1];
 				let tex = match ti_opt {
 					Some(ti) if ti > 0 && ti <= texcoords.len() => texcoords[ti - 1],
@@ -124,23 +160,29 @@ fn parse_obj(filename: &str) -> Vec<f32> {
 	vertices
 }
 
+
+
 fn main() {
 	panic::set_hook(Box::new(|info| {
-        eprintln!("Application panicked: {}", info);
-        unsafe {
-            glfw::ffi::glfwTerminate();
-        }
-        std::process::exit(1);
-    }));
+		eprintln!("Application panicked: {}", info);
+		unsafe {
+			glfw::ffi::glfwTerminate();
+		}
+		std::process::exit(1);
+	}));
+
 	let filename = std::env::args().nth(1).expect("No filename given");
 	if !filename.ends_with(".obj") {
 		panic!("File must be a .obj");
 	}
-	let texture_filename = std::env::args().nth(2).expect("No filename given");
-	if !texture_filename.ends_with(".png") && !texture_filename.ends_with(".jpg") && !texture_filename.ends_with(".jpeg") {
+	let texture_filename = std::env::args().nth(2).expect("No texture filename given");
+	if !texture_filename.ends_with(".png")
+		&& !texture_filename.ends_with(".jpg")
+		&& !texture_filename.ends_with(".jpeg")
+	{
 		panic!("Texture file must be a .png, .jpg or .jpeg");
 	}
-	
+
 	let mut glfw = glfw::init(glfw::fail_on_errors).expect("Failed to initialize GLFW");
 	glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(
@@ -157,15 +199,15 @@ fn main() {
 	window.set_mouse_button_polling(true);
 	window.set_cursor_pos_polling(true);
 
-	let mut dragging = false;
+	// === Cursor / Mouse pos and dragging state ===
 	let mut last_cursor = (0.0, 0.0);
-
-	let mut rot_dragging = false;
+	let mut dragging = false;
 	let mut rot_last_cursor = (0.0, 0.0);
+	let mut rot_dragging = false;
 
 	gl::load_with(|s| glfw.get_proc_address_raw(s).map_or(ptr::null(), |f| f as *const _));
 
-	let vertices = parse_obj(&filename);
+	let vertices = crate::parse_obj(&filename);
 
 	let mut vao = 0;
 	let mut vbo = 0;
@@ -198,8 +240,10 @@ fn main() {
 		gl::EnableVertexAttribArray(1);
 	}
 
-	let vertex_shader_src = CString::new(fs::read_to_string("shaders/vs.glsl").unwrap()).unwrap();
-	let fragment_shader_src = CString::new(fs::read_to_string("shaders/fs.glsl").unwrap()).unwrap();
+	let vertex_shader_src =
+		CString::new(fs::read_to_string("shaders/vs.glsl").unwrap()).unwrap();
+	let fragment_shader_src =
+		CString::new(fs::read_to_string("shaders/fs.glsl").unwrap()).unwrap();
 	let vertex_shader = compile_shader(vertex_shader_src.as_c_str(), gl::VERTEX_SHADER);
 	let fragment_shader = compile_shader(fragment_shader_src.as_c_str(), gl::FRAGMENT_SHADER);
 	let shader_program = link_program(vertex_shader, fragment_shader);
@@ -211,69 +255,108 @@ fn main() {
 	let mut anglex = 90.0;
 	let mut angley = 0.0;
 	let mut texture_enabled = false;
-	// Transition state for smooth blend between normal and texture
+
+	// === Transition state for texture mix ===
 	let mut transitioning = false;
 	let mut transition_start = std::time::Instant::now();
 	let transition_duration = std::time::Duration::from_millis(300);
 
-	// Cache uniform location for mixFactor
+	// === Transition state for rainbow/gray ===
+	let mut color_transitioning = false;
+	let mut color_target = 0.0f32; // 0 = grayscale, 1 = rainbow
+	let mut color_transition_start = std::time::Instant::now();
+	let color_transition_duration = std::time::Duration::from_millis(300);
+
+	// Cache uniform locations
 	let mix_loc: i32;
+	let color_mix_loc: i32;
 
 	unsafe {
 		gl::UseProgram(shader_program);
 		let p_location =
 			gl::GetUniformLocation(shader_program, CString::new("p").unwrap().as_ptr());
 		gl::UniformMatrix4fv(p_location, 1, gl::TRUE, projection.as_ptr());
-		// Bind the sampler to texture unit 0 and make sure unit 0 is active
-		let sampler_loc =
-			gl::GetUniformLocation(shader_program, CString::new("ourTexture").unwrap().as_ptr());
+
+		// texture sampler
+		let sampler_loc = gl::GetUniformLocation(
+			shader_program,
+			CString::new("ourTexture").unwrap().as_ptr(),
+		);
 		if sampler_loc != -1 {
 			gl::Uniform1i(sampler_loc, 0);
 		}
-		// Locate mixFactor and set initial value to 0 (show normals)
+
+		// uniforms
 		mix_loc = gl::GetUniformLocation(shader_program, CString::new("mixFactor").unwrap().as_ptr());
-		if mix_loc != -1 { gl::Uniform1f(mix_loc, 0.0); }
+		if mix_loc != -1 {
+			gl::Uniform1f(mix_loc, 0.0);
+		}
+
+		color_mix_loc =
+			gl::GetUniformLocation(shader_program, CString::new("colorMixFactor").unwrap().as_ptr());
+		if color_mix_loc != -1 {
+			gl::Uniform1f(color_mix_loc, 0.0); // start grayscale
+		}
+
 		gl::ActiveTexture(gl::TEXTURE0);
 		gl::BindTexture(gl::TEXTURE_2D, texture_id);
 		gl::Enable(gl::DEPTH_TEST);
 	}
 
+	let mut manual_mode = false;
+	let mut last_frame = std::time::Instant::now();
+
 	while !window.should_close() {
+		let now = std::time::Instant::now();
+		let delta = now.duration_since(last_frame).as_secs_f32();
+		last_frame = now;
+
 		glfw.poll_events();
 
-		let matricerotx = rotation(anglex, Vector3::new(0.0, 1.0, 0.0));
-		let matriceroty = rotation(angley, Vector3::new(1.0, 0.0, 0.0));
-		let translation = translation(position);
+		if manual_mode {
+			// Manual movement
+			if window.get_key(Key::D) == Action::Press && !dragging {
+				position.x += 0.05;
+			}
+			if window.get_key(Key::A) == Action::Press && !dragging {
+				position.x -= 0.05;
+			}
+			if window.get_key(Key::W) == Action::Press && !dragging {
+				position.y += 0.05;
+			}
+			if window.get_key(Key::S) == Action::Press && !dragging {
+				position.y -= 0.05;
+			}
+			if window.get_key(Key::Right) == Action::Press && !rot_dragging {
+				anglex -= 0.5;
+			}
+			if window.get_key(Key::Left) == Action::Press && !rot_dragging {
+				anglex += 0.5;
+			}
+			if window.get_key(Key::Up) == Action::Press && !rot_dragging {
+				angley -= 0.5;
+			}
+			if window.get_key(Key::Down) == Action::Press && !rot_dragging {
+				angley += 0.5;
+			}
+		} else {
+			// Auto spin
+			anglex += 30.0 * delta;
+		}
 
-		if window.get_key(Key::D) == Action::Press && !dragging {
-		position.x += 0.05;
-		}
-		if window.get_key(Key::A) == Action::Press && !dragging {
-			position.x -= 0.05;
-		}
-		if window.get_key(Key::W) == Action::Press && !dragging {
-			position.y += 0.05;
-		}
-		if window.get_key(Key::S) == Action::Press && !dragging {
-			position.y -= 0.05;
-		}
-		if window.get_key(Key::Right) == Action::Press && !rot_dragging {
-			anglex -= 0.5;
-		}
-		if window.get_key(Key::Left) == Action::Press && !rot_dragging {
-			anglex += 0.5;
-		}
-		if window.get_key(Key::Up) == Action::Press && !rot_dragging {
-			angley -= 0.5;
-		}
-		if window.get_key(Key::Down) == Action::Press && !rot_dragging {
-			angley += 0.5;
-		}
 		if window.get_key(Key::T) == Action::Press && !transitioning {
 			texture_enabled = !texture_enabled;
 			transitioning = true;
 			transition_start = std::time::Instant::now();
 		}
+		if window.get_key(Key::R) == Action::Press && !color_transitioning {
+			color_target = if color_target < 0.5 { 1.0 } else { 0.0 };
+			color_transitioning = true;
+			color_transition_start = std::time::Instant::now();
+		}
+		
+		// Clamp angles to [0, 360) to prevent overflow
+		anglex = anglex.rem_euclid(360.0);
 
 		unsafe {
 			gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
@@ -282,25 +365,45 @@ fn main() {
 			let m_rot =
 				gl::GetUniformLocation(shader_program, CString::new("rot").unwrap().as_ptr());
 
+			let matricerotx = rotation(anglex, Vector3::new(0.0, 1.0, 0.0));
+			let matriceroty = rotation(angley, Vector3::new(1.0, 0.0, 0.0));
+			let translation = translation(position);
+
 			let temp = matrix4_mult(&matricerotx, &matriceroty);
 			let result = matrix4_mult(&temp, &translation);
 
-			gl::UniformMatrix4fv(
-				m_rot,
-				1,
-				gl::TRUE,
-				result.as_ptr() as *const f32,
-			);
+			gl::UniformMatrix4fv(m_rot, 1, gl::TRUE, result.as_ptr() as *const f32);
 
-			// Compute mix factor based on transition state
+			// === Texture mix factor update ===
 			let target = if texture_enabled { 1.0f32 } else { 0.0f32 };
 			let t = if transitioning {
 				let elapsed = transition_start.elapsed();
 				(elapsed.as_secs_f32() / transition_duration.as_secs_f32()).min(1.0)
-			} else { 1.0 };
+			} else {
+				1.0
+			};
 			let current = if target > 0.5 { t } else { 1.0 - t };
-			if t >= 1.0 { transitioning = false; }
-			if mix_loc != -1 { gl::Uniform1f(mix_loc, current); }
+			if t >= 1.0 {
+				transitioning = false;
+			}
+			if mix_loc != -1 {
+				gl::Uniform1f(mix_loc, current);
+			}
+
+			// === Color mix factor update (gray ↔ rainbow) ===
+			let color_t = if color_transitioning {
+				let elapsed = color_transition_start.elapsed();
+				(elapsed.as_secs_f32() / color_transition_duration.as_secs_f32()).min(1.0)
+			} else {
+				1.0
+			};
+			let current_color = if color_target > 0.5 { color_t } else { 1.0 - color_t };
+			if color_t >= 1.0 {
+				color_transitioning = false;
+			}
+			if color_mix_loc != -1 {
+				gl::Uniform1f(color_mix_loc, current_color);
+			}
 
 			gl::BindVertexArray(vao);
 			gl::DrawArrays(gl::TRIANGLES, 0, (vertices.len() / 5) as i32);
@@ -310,46 +413,49 @@ fn main() {
 
 		for (_, event) in glfw::flush_messages(&events) {
 			match event {
-				glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
-					println!("Escape pressed, exiting.");
-					window.set_should_close(true);
-				}
-				glfw::WindowEvent::Scroll(_, yoffset) => position.z += yoffset as f32 * 0.1,
+				WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
+                    println!("Escape pressed, exiting.");
+                    window.set_should_close(true);
+                }
+                WindowEvent::Key(Key::Space, _, Action::Press, _) => {
+                    manual_mode = !manual_mode;
+                }
+                WindowEvent::Scroll(_, yoffset) if manual_mode => {
+                    position.z += yoffset as f32 * 0.1;
+                }
+                WindowEvent::MouseButton(MouseButtonLeft, Action::Press, _) if manual_mode => {
+                    dragging = true;
+                    last_cursor = window.get_cursor_pos();
+                }
+                WindowEvent::MouseButton(MouseButtonLeft, Action::Release, _) => dragging = false,
+                WindowEvent::CursorPos(x, y) if dragging && manual_mode => {
+                    let dx = x - last_cursor.0;
+                    let dy = y - last_cursor.1;
 
-				glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _) => {
-					dragging = true;
-					last_cursor = window.get_cursor_pos();
-				}
-				glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Release, _) => dragging = false,
-				glfw::WindowEvent::CursorPos(x, y) if dragging => {
-					let dx = x - last_cursor.0;
-					let dy = y - last_cursor.1;
+                    position.x += dx as f32 * 0.01;
+                    position.y -= dy as f32 * 0.01;
 
-					position.x += dx as f32 * 0.01;
-					position.y -= dy as f32 * 0.01;
+                    last_cursor = (x, y);
+                }
+                WindowEvent::MouseButton(MouseButtonRight, Action::Press, _) if manual_mode => {
+                    rot_dragging = true;
+                    rot_last_cursor = window.get_cursor_pos();
+                }
+                WindowEvent::MouseButton(MouseButtonRight, Action::Release, _) => rot_dragging = false,
+                WindowEvent::CursorPos(x, y) if rot_dragging && manual_mode => {
+                    let dx = x - rot_last_cursor.0;
+                    let dy = y - rot_last_cursor.1;
 
-					last_cursor = (x, y);
-				}
+                    anglex += dx as f32 * 0.5;
+                    angley += dy as f32 * 0.5;
 
-				glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Press, _) => {
-					rot_dragging = true;
-					rot_last_cursor = window.get_cursor_pos();
-				}
-				glfw::WindowEvent::MouseButton(glfw::MouseButtonRight, Action::Release, _) => rot_dragging = false,
-				glfw::WindowEvent::CursorPos(x, y) if rot_dragging => {
-					let dx = x - rot_last_cursor.0;
-					let dy = y - rot_last_cursor.1;
-
-					anglex += dx as f32 * 0.5;
-					angley += dy as f32 * 0.5;
-
-					rot_last_cursor = (x, y);
-				}
-				
+                    rot_last_cursor = (x, y);
+                }
 				_ => {}
 			}
 		}
 	}
+
 	drop(window);
 	unsafe {
 		gl::DeleteVertexArrays(1, &vao);
