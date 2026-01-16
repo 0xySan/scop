@@ -14,8 +14,9 @@ pub fn load_texture(path: &str) -> u32 {
 
 		gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
 
-		gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT as i32);
-		gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT as i32);
+		// Use CLAMP_TO_EDGE to prevent stretching on sides
+		gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+		gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
 		gl::TexParameteri(
 			gl::TEXTURE_2D,
 			gl::TEXTURE_MIN_FILTER,

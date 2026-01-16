@@ -5,6 +5,7 @@ extern crate image;
 use cgmath::*;
 use std::ffi::CString;
 use std::fs;
+use std::path::Path;
 use std::ptr;
 use std::panic;
 use std::str;
@@ -175,12 +176,32 @@ fn main() {
 	if !filename.ends_with(".obj") {
 		panic!("File must be a .obj");
 	}
-	let texture_filename = std::env::args().nth(2).expect("No texture filename given");
-	if !texture_filename.ends_with(".png")
-		&& !texture_filename.ends_with(".jpg")
-		&& !texture_filename.ends_with(".jpeg")
-	{
-		panic!("Texture file must be a .png, .jpg or .jpeg");
+	
+	// Load all textures from the textures/ folder
+	let texture_dir = Path::new("textures");
+	let mut texture_paths: Vec<String> = Vec::new();
+	
+	if texture_dir.exists() {
+		if let Ok(entries) = fs::read_dir(texture_dir) {
+			for entry in entries {
+				if let Ok(entry) = entry {
+					let path = entry.path();
+					if let Some(extension) = path.extension() {
+						let ext = extension.to_string_lossy().to_lowercase();
+						if ext == "png" || ext == "jpg" || ext == "jpeg" {
+							if let Some(path_str) = path.to_str() {
+								texture_paths.push(path_str.to_string());
+							}
+						}
+					}
+				}
+			}
+		}
+		texture_paths.sort();
+	}
+	
+	if texture_paths.is_empty() {
+		panic!("No texture files found in textures/ folder (.png, .jpg, .jpeg)");
 	}
 
 	let mut glfw = glfw::init(glfw::fail_on_errors).expect("Failed to initialize GLFW");
@@ -248,13 +269,18 @@ fn main() {
 	let fragment_shader = compile_shader(fragment_shader_src.as_c_str(), gl::FRAGMENT_SHADER);
 	let shader_program = link_program(vertex_shader, fragment_shader);
 
-	let texture_id = load_texture(&texture_filename);
-
 	let projection = calc_matrices::perspective(45.0, 1920.0 / 1080.0, 0.1, 1000.0);
 	let mut position = Vector3::new(0.0, 0.0, -10.0);
 	let mut anglex = 90.0;
 	let mut angley = 0.0;
 	let mut texture_enabled = false;
+	
+	// === Texture cycling ===
+	let mut current_texture_idx = 0;
+	let mut texture_ids: Vec<u32> = Vec::new();
+	for texture_path in &texture_paths {
+		texture_ids.push(load_texture(texture_path));
+	}
 
 	// === Transition state for texture mix ===
 	let mut transitioning = false;
@@ -266,6 +292,10 @@ fn main() {
 	let mut color_target = 0.0f32; // 0 = grayscale, 1 = rainbow
 	let mut color_transition_start = std::time::Instant::now();
 	let color_transition_duration = std::time::Duration::from_millis(300);
+	
+	// === Texture cycling key cooldown ===
+	let mut last_texture_switch = std::time::Instant::now();
+	let texture_switch_cooldown = std::time::Duration::from_millis(200);
 
 	// Cache uniform locations
 	let mix_loc: i32;
@@ -289,7 +319,7 @@ fn main() {
 		// uniforms
 		mix_loc = gl::GetUniformLocation(shader_program, CString::new("mixFactor").unwrap().as_ptr());
 		if mix_loc != -1 {
-			gl::Uniform1f(mix_loc, 0.0);
+			gl::Uniform1f(mix_loc, 0.3); // Subtle texture blending (30%)
 		}
 
 		color_mix_loc =
@@ -299,7 +329,7 @@ fn main() {
 		}
 
 		gl::ActiveTexture(gl::TEXTURE0);
-		gl::BindTexture(gl::TEXTURE_2D, texture_id);
+		gl::BindTexture(gl::TEXTURE_2D, texture_ids[current_texture_idx]);
 		gl::Enable(gl::DEPTH_TEST);
 	}
 
@@ -353,6 +383,21 @@ fn main() {
 			color_target = if color_target < 0.5 { 1.0 } else { 0.0 };
 			color_transitioning = true;
 			color_transition_start = std::time::Instant::now();
+		}
+		
+		// Cycle textures with N and M keys
+		if (window.get_key(Key::N) == Action::Press || window.get_key(Key::M) == Action::Press) && last_texture_switch.elapsed() >= texture_switch_cooldown {
+			if window.get_key(Key::N) == Action::Press {
+				current_texture_idx = (current_texture_idx + 1) % texture_ids.len();
+			} else if window.get_key(Key::M) == Action::Press {
+				current_texture_idx = if current_texture_idx == 0 { texture_ids.len() - 1 } else { current_texture_idx - 1 };
+			}
+			unsafe {
+				gl::ActiveTexture(gl::TEXTURE0);
+				gl::BindTexture(gl::TEXTURE_2D, texture_ids[current_texture_idx]);
+			}
+			last_texture_switch = std::time::Instant::now();
+			println!("Switched to texture: {}", texture_paths[current_texture_idx]);
 		}
 		
 		// Clamp angles to [0, 360) to prevent overflow
@@ -461,7 +506,9 @@ fn main() {
 		gl::DeleteVertexArrays(1, &vao);
 		gl::DeleteBuffers(1, &vbo);
 		gl::DeleteProgram(shader_program);
-		gl::DeleteTextures(1, &texture_id);
+		for texture_id in &texture_ids {
+			gl::DeleteTextures(1, texture_id);
+		}
 		gl::DeleteShader(vertex_shader);
 		gl::DeleteShader(fragment_shader);
 		glfw::ffi::glfwTerminate();
